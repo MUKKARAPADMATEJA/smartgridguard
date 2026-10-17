@@ -1,0 +1,203 @@
+#include <Wire.h>
+
+const int VOLTAGE_PIN = A0;
+const int LED_GREEN = 10;
+const int LED_ORANGE = 9;
+const int LED_RED = 8;
+const int BUZZER_PIN = 5;
+
+const float MAX_GRID_VOLTAGE = 250.0;
+const float MIN_GRID_VOLTAGE = 0.0;
+
+const float THRESHOLD_WARN = 210.0;
+const float THRESHOLD_CRITICAL = 180.0;
+const float CRITICAL_DROP_RATE = 40.0;
+
+const int FILTER_SAMPLES = 10;
+float voltageHistory[FILTER_SAMPLES];
+int historyIndex = 0;
+float smoothedVoltage = 230.0;
+
+unsigned long lastRateCheckTime = 0;
+const unsigned long rateCheckInterval = 500;
+float voltageAtLastCheck = 230.0;
+float currentDropRate = 0.0;
+
+unsigned long lastBuzzerToggle = 0;
+bool buzzerState = false;
+unsigned long lastLEDToggle = 0;
+bool ledState = false;
+
+enum GridState {
+  STATE_STABLE,
+  STATE_UNSTABLE,
+  STATE_CRITICAL
+};
+
+enum GridState currentGridState = STATE_STABLE;
+enum GridState lastTelegramSentState = STATE_STABLE;
+
+String inputBuffer = "";
+unsigned long systemStartTime = 0;
+unsigned long lastCharTime = 0;
+
+#define LCD_ADDR 0x27
+#define PIN_RS 0x01
+#define PIN_EN 0x04
+#define PIN_BACKLIGHT 0x08
+
+void lcd_write_nibble(byte nibble, byte rs) {
+  byte data = (nibble & 0xF0) | rs | PIN_BACKLIGHT;
+  Wire.beginTransmission(LCD_ADDR);
+  Wire.write(data | PIN_EN);
+  Wire.endTransmission();
+  delayMicroseconds(1);
+  
+  Wire.beginTransmission(LCD_ADDR);
+  Wire.write(data & ~PIN_EN);
+  Wire.endTransmission();
+  delayMicroseconds(50);
+}
+
+void lcd_send(byte value, byte rs) {
+  lcd_write_nibble(value & 0xF0, rs);
+  lcd_write_nibble((value << 4) & 0xF0, rs);
+}
+
+void lcd_command(byte command) {
+  lcd_send(command, 0);
+}
+
+void lcd_write_char(byte value) {
+  lcd_send(value, PIN_RS);
+}
+
+void lcd_begin() {
+  Wire.begin();
+  delay(50);
+  
+  lcd_write_nibble(0x30, 0);
+  delay(5);
+  lcd_write_nibble(0x30, 0);
+  delayMicroseconds(150);
+  lcd_write_nibble(0x30, 0);
+  delay(1);
+  lcd_write_nibble(0x20, 0);
+  
+  lcd_command(0x28);
+  lcd_command(0x0C);
+  lcd_command(0x06);
+  lcd_command(0x01);
+  delay(2);
+}
+
+void lcd_clear() {
+  lcd_command(0x01);
+  delay(2);
+}
+
+void lcd_setCursor(byte col, byte row) {
+  byte offsets[] = { 0x00, 0x40 };
+  lcd_command(0x80 | (col + offsets[row]));
+}
+
+void lcd_print(const char* str) {
+  while (*str) {
+    lcd_write_char(*str++);
+  }
+}
+
+void lcd_print(int val) {
+  char buf[8];
+  itoa(val, buf, 10);
+  lcd_print(buf);
+}
+
+float readRawGridVoltage(void);
+void updateMovingAverage(float newSample);
+void evaluateGridState(void);
+void updateVisualAlerts(void);
+void updateAudibleAlerts(void);
+void updateLCDDisplay(void);
+void handleProactiveTelegramAlerts(void);
+void handleIncomingTelegramCommands(void);
+void printTelegramReport(void);
+void printTelegramHelp(void);
+void printTelegramHistory(void);
+
+void setup() {
+  int i;
+  float initialReading;
+
+  Serial.begin(9600);
+  Serial.println("=======================================================");
+  Serial.println("BOT: SMART GRID GUARD TELEGRAM SIMULATOR");
+  Serial.println("-------------------------------------------------------");
+  Serial.println("Type 'current voltage', 'history', or 'help' in Serial box");
+  Serial.println("=======================================================");
+
+  pinMode(LED_GREEN, OUTPUT);
+  pinMode(LED_ORANGE, OUTPUT);
+  pinMode(LED_RED, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(VOLTAGE_PIN, INPUT);
+
+  digitalWrite(LED_GREEN, LOW);
+  digitalWrite(LED_ORANGE, LOW);
+  digitalWrite(LED_RED, LOW);
+  noTone(BUZZER_PIN);
+
+  lcd_begin();
+  
+  lcd_setCursor(0, 0);
+  lcd_print("Smart Grid Guard");
+  lcd_setCursor(0, 1);
+  lcd_print("Initializing...");
+  delay(1500);
+  lcd_clear();
+
+  initialReading = readRawGridVoltage();
+  for (i = 0; i < FILTER_SAMPLES; i++) {
+    voltageHistory[i] = initialReading;
+  }
+  smoothedVoltage = initialReading;
+  voltageAtLastCheck = initialReading;
+  lastRateCheckTime = millis();
+  systemStartTime = millis();
+}
+
+void loop() {
+  float rawVoltage;
+  unsigned long currentTime;
+  float timeDelta;
+  float voltageDelta;
+
+  rawVoltage = readRawGridVoltage();
+  updateMovingAverage(rawVoltage);
+
+  currentTime = millis();
+  if (currentTime - lastRateCheckTime >= rateCheckInterval) {
+    timeDelta = (currentTime - lastRateCheckTime) / 1000.0;
+    voltageDelta = voltageAtLastCheck - smoothedVoltage;
+    
+    currentDropRate = voltageDelta / timeDelta;
+    
+    voltageAtLastCheck = smoothedVoltage;
+    lastRateCheckTime = currentTime;
+
+    Serial.print("RawV:"); Serial.print(rawVoltage);
+    Serial.print(" | SmoothV:"); Serial.print(smoothedVoltage);
+    Serial.print(" | DropRate:"); Serial.println(currentDropRate);
+  }
+
+  evaluateGridState();
+
+  handleProactiveTelegramAlerts();
+  handleIncomingTelegramCommands();
+
+  updateVisualAlerts();
+  updateAudibleAlerts();
+  updateLCDDisplay();
+
+  delay(50);
+}
