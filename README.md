@@ -50,3 +50,29 @@ Electrical power systems often experience voltage fluctuations and unexpected fa
  [Telegram Bot API]
        ↓
  [Instant User Notification]
+
+Implementation & Setup
+1.Circuit Simulation (Tinkercad):
+
+Connect the Potentiometer to an analog input pin on the Arduino Uno.
+
+Interface the 16×2 LCD display using I2C communication (SDA and SCL pins).
+
+Connect the Green, Yellow, and Red LEDs along with the Piezo Buzzer to digital output pins.
+
+2.Arduino Firmware:
+
+Upload the .ino sketch to the Arduino Uno to read analog values, classify voltage states, trigger local outputs, and transmit status over Serial.
+
+3.Telegram Bot Integration (Python):
+
+Run the Python script via the command prompt to listen to the serial port and push real-time alerts to your Telegram chat using your Bot Token and Chat ID.
+
+Future Scope
+1.Standalone IoT Integration: Upgrade to ESP32/ESP8266 for direct Wi-Fi connectivity without requiring a PC bridge.
+
+2.Cloud & Mobile App: Log historical voltage data to the cloud and provide a dedicated mobile dashboard.
+
+3.Multi-Parameter Tracking: Expand monitoring to include current, power consumption, frequency, and temperature.
+
+4.AI-Based Fault Prediction & Auto-Cutoff: Use machine learning to predict grid anomalies and automatically disconnect equipment during critical faults.
